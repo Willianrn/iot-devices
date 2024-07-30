@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using ClimateMonitor.Services;
 using ClimateMonitor.Services.Models;
+using System.Net;
 
 namespace ClimateMonitor.Api.Controllers;
 
@@ -9,13 +10,16 @@ namespace ClimateMonitor.Api.Controllers;
 public class ReadingsController : ControllerBase
 {
     private readonly DeviceSecretValidatorService _secretValidator;
+    private readonly FirmwareValidatorService _firmwareValidator;
     private readonly AlertService _alertService;
 
     public ReadingsController(
         DeviceSecretValidatorService secretValidator, 
+        FirmwareValidatorService firmwareValidator,
         AlertService alertService)
     {
         _secretValidator = secretValidator;
+        _firmwareValidator = firmwareValidator;
         _alertService = alertService;
     }
 
@@ -34,7 +38,7 @@ public class ReadingsController : ControllerBase
     /// <param name="deviceReadingRequest">Sensor information and extra metadata from device.</param>
     [HttpPost("evaluate")]
     public ActionResult<IEnumerable<Alert>> EvaluateReading(
-        string deviceSecret,
+        [FromHeader(Name = "x-device-shared-secret")] string deviceSecret,
         [FromBody] DeviceReadingRequest deviceReadingRequest)
     {
         if (!_secretValidator.ValidateDeviceSecret(deviceSecret))
@@ -42,6 +46,15 @@ public class ReadingsController : ControllerBase
             return Problem(
                 detail: "Device secret is not within the valid range.",
                 statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        if (!_firmwareValidator.ValidateFirmwareVersion(deviceReadingRequest.FirmwareVersion))
+        {
+            var error = new ValidationProblemDetails();
+            error.Errors.Add("FirmwareVersion", new[] { "The firmware value does not match semantic versioning format." });
+            error.Status = StatusCodes.Status400BadRequest;
+
+            return ValidationProblem(error);
         }
 
         return Ok(_alertService.GetAlerts(deviceReadingRequest));
